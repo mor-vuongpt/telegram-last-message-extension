@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Telegram - Tin nhắn cuối</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="panel">
+      <header class="header">
+        <div class="telegram-mark" aria-hidden="true">➤</div>
+        <div>
+          <h1>Tin nhắn cuối</h1>
+          <p>Phân tích Forex bằng GPT-5.6 Sol</p>
+        </div>
+      </header>
+
+      <div class="field">
+        <label for="openaiApiKey">OpenAI API key</label>
+        <input
+          id="openaiApiKey"
+          type="password"
+          placeholder="sk-..."
+          autocomplete="off"
+          spellcheck="false"
+        >
+        <p>Khóa được lưu cục bộ trong profile Chrome để tự chạy sau khi khởi động lại.</p>
+      </div>
+
+      <details class="webhook-settings">
+        <summary>Kết nối webhook MetaTrader 5</summary>
+
+        <div class="field webhook-field">
+          <label for="webhookUrl">Webhook URL</label>
+          <input
+            id="webhookUrl"
+            type="url"
+            value="http://127.0.0.1:8787"
+            spellcheck="false"
+          >
+        </div>
+
+        <div class="field webhook-field">
+          <label for="webhookToken">Webhook token</label>
+          <input
+            id="webhookToken"
+            type="password"
+            placeholder="Tối thiểu 16 ký tự"
+            autocomplete="off"
+            spellcheck="false"
+          >
+        </div>
+
+        <label class="checkbox-row" for="autoSendWebhook">
+          <input id="autoSendWebhook" type="checkbox">
+          <span>Tự động theo dõi tin nhắn mới và gửi MT5</span>
+        </label>
+      </details>
+
+      <div id="automationPanel" class="automation-panel">
+        <strong id="automationTitle">Tự động hóa đang tắt</strong>
+        <p id="automationStatus">Bật tùy chọn trên tại đúng tab Telegram cần theo dõi.</p>
+      </div>
+
+      <button id="getMessageButton" class="primary-button" type="button">
+        Lấy và phân tích tin nhắn
+      </button>
+
+      <p id="elapsedTime" class="elapsed-time" aria-live="off">
+        Thời gian xử lý: —
+      </p>
+
+      <section id="result" class="result" hidden aria-live="polite">
+        <label for="analysisResult">Kết quả JSON</label>
+        <textarea
+          id="analysisResult"
+          rows="7"
+          readonly
+          spellcheck="false"
+          aria-label="Kết quả phân tích JSON"
+        ></textarea>
+        <button id="copyButton" class="secondary-button" type="button">
+          Sao chép JSON
+        </button>
+        <button
+          id="sendWebhookButton"
+          class="webhook-button"
+          type="button"
+          hidden
+        >
+          Gửi JSON sang MT5
+        </button>
+        <p id="webhookStatus" class="webhook-status" hidden></p>
+      </section>
+
+      <p id="status" class="status" role="status">
+        Nhập cấu hình, mở đúng cuộc trò chuyện Telegram rồi bật tự động.
+      </p>
+
+      <p class="disclaimer">Chỉ trích xuất dữ liệu từ tin nhắn, không phải khuyến nghị giao dịch.</p>
+    </main>
+
+    <script src="forex-core.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

@@ -1,0 +1,316 @@
+:root {
+  color-scheme: light dark;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #ffffff;
+  color: #17212b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  width: 360px;
+  min-height: 360px;
+  margin: 0;
+  background: #ffffff;
+}
+
+.panel {
+  padding: 18px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.telegram-mark {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 50%;
+  background: #2aabee;
+  color: #ffffff;
+  font-size: 22px;
+  transform: rotate(-35deg);
+}
+
+h1 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.header p {
+  margin: 2px 0 0;
+  color: #707579;
+  font-size: 12px;
+}
+
+button {
+  width: 100%;
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 650;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.field {
+  margin-bottom: 14px;
+}
+
+.field label,
+.result label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.field input {
+  width: 100%;
+  border: 1px solid #dfe1e5;
+  border-radius: 9px;
+  padding: 10px;
+  background: #f7f8fa;
+  color: #17212b;
+  font: 13px/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.field input:focus {
+  border-color: #3390ec;
+  outline: 2px solid rgb(51 144 236 / 18%);
+}
+
+.field p {
+  margin: 6px 0 0;
+  color: #707579;
+  font-size: 11px;
+}
+
+.webhook-settings {
+  margin: 0 0 14px;
+  border: 1px solid #dfe1e5;
+  border-radius: 9px;
+  padding: 10px;
+}
+
+.webhook-settings summary {
+  cursor: pointer;
+  color: #168acd;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.webhook-field {
+  margin: 10px 0 0;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.checkbox-row input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+}
+
+.automation-panel {
+  margin: 0 0 14px;
+  border: 1px solid #dfe1e5;
+  border-radius: 9px;
+  padding: 10px;
+  background: #f7f8fa;
+}
+
+.automation-panel strong {
+  display: block;
+  font-size: 12px;
+}
+
+.automation-panel p {
+  margin: 4px 0 0;
+  color: #707579;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.automation-panel.monitoring,
+.automation-panel.sent {
+  border-color: #63b875;
+}
+
+.automation-panel.processing {
+  border-color: #3390ec;
+}
+
+.automation-panel.error {
+  border-color: #d64545;
+}
+
+.primary-button {
+  padding: 11px 14px;
+  background: #3390ec;
+  color: #ffffff;
+}
+
+.primary-button:hover:not(:disabled) {
+  background: #2b7fd1;
+}
+
+.elapsed-time {
+  margin: 8px 0 0;
+  color: #707579;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.result {
+  margin-top: 16px;
+}
+
+textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid #dfe1e5;
+  border-radius: 9px;
+  padding: 10px;
+  background: #f7f8fa;
+  color: #17212b;
+  font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.secondary-button {
+  margin-top: 8px;
+  padding: 9px 12px;
+  background: #eaf4fc;
+  color: #168acd;
+}
+
+.webhook-button {
+  margin-top: 8px;
+  padding: 9px 12px;
+  background: #2b8a3e;
+  color: #ffffff;
+}
+
+.webhook-button:hover:not(:disabled) {
+  background: #237233;
+}
+
+.webhook-status {
+  margin: 8px 0 0;
+  color: #707579;
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.webhook-status.success {
+  color: #2b8a3e;
+}
+
+.webhook-status.error {
+  color: #d64545;
+}
+
+.status {
+  margin: 12px 0 0;
+  color: #707579;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.status.error {
+  color: #d64545;
+}
+
+.status.success {
+  color: #2b8a3e;
+}
+
+.status.warning {
+  color: #a86500;
+}
+
+.disclaimer {
+  margin: 10px 0 0;
+  color: #8a8f94;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root,
+  body {
+    background: #17212b;
+    color: #f5f5f5;
+  }
+
+  .header p,
+  .field p,
+  .elapsed-time,
+  .webhook-status,
+  .status {
+    color: #a8b0b7;
+  }
+
+  .webhook-settings {
+    border-color: #354452;
+  }
+
+  .automation-panel {
+    border-color: #354452;
+    background: #202b36;
+  }
+
+  .automation-panel p {
+    color: #a8b0b7;
+  }
+
+  .field input,
+  textarea {
+    border-color: #354452;
+    background: #202b36;
+    color: #f5f5f5;
+  }
+
+  .secondary-button {
+    background: #223d50;
+    color: #64b5ea;
+  }
+
+  .webhook-button {
+    background: #2b8a3e;
+    color: #ffffff;
+  }
+
+  .webhook-status.success {
+    color: #58bd6a;
+  }
+
+  .webhook-status.error {
+    color: #ef6a6a;
+  }
+
+
+  .status.warning {
+    color: #f0ad4e;
+  }
+}

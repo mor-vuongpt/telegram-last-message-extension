@@ -1,0 +1,13 @@
+{
+  "name": "telegram-mt5-webhook",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Authenticated local webhook queue for Telegram Forex signals and MetaTrader 5",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test server.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

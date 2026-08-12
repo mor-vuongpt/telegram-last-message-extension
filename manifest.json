@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Telegram - Tin nhắn cuối",
+  "version": "1.4.0",
+  "description": "Tự động đọc tin nhắn text mới trên Telegram Web, phân tích Forex và gửi tín hiệu tới MetaTrader 5.",
+  "permissions": [
+    "activeTab",
+    "clipboardWrite",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://api.openai.com/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://web.telegram.org/*"
+      ],
+      "js": [
+        "content-script.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Lấy tin nhắn cuối",
+    "default_popup": "popup.html"
+  }
+}
