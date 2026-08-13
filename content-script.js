@@ -63,6 +63,13 @@ const REMOVE_FROM_TEXT_SELECTORS = [
   ".message-title",
   ".status",
   ".views",
+  ".site-name",
+  ".site-title",
+  ".site-description",
+  ".WebPage-text",
+  ".web-page-text",
+  ".link-preview-title",
+  ".link-preview-description",
   "button",
   "svg",
 ];
@@ -86,9 +93,6 @@ const EXCLUDED_TEXT_CONTEXT_SELECTORS = [
   ".message-title",
   ".status",
   ".views",
-  ".WebPage",
-  ".web-page",
-  ".link-preview",
   ".document",
   "button",
 ];
@@ -271,11 +275,25 @@ function removeNestedCandidates(elements) {
 }
 
 function findTextMessageCandidates(root) {
-  return removeNestedCandidates(
+  const candidates = removeNestedCandidates(
     [...root.querySelectorAll(MESSAGE_SELECTORS.join(","))].filter(
       isLikelyMessage
     )
   ).filter((element) => Boolean(extractText(element)));
+
+  // Telegram virtualizes and reuses message nodes, so DOM order is not always
+  // the same as the order painted on screen. Prefer the visually lowest
+  // message, with DOM order only as a tie-breaker.
+  return candidates.sort((first, second) => {
+    const firstTop = first.getBoundingClientRect().top;
+    const secondTop = second.getBoundingClientRect().top;
+    if (Math.abs(firstTop - secondTop) > 1) {
+      return firstTop - secondTop;
+    }
+
+    const position = first.compareDocumentPosition(second);
+    return position & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
+  });
 }
 
 function findLastMessage(root) {

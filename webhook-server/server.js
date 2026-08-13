@@ -41,14 +41,18 @@ function validateSignal(value) {
     .toLowerCase()
     .replace(/\s+/g, " ");
   const entry = String(value.entry ?? "").trim();
-  const TP = normalizePrice(value.TP);
+  const rawTP = String(value.TP ?? "").trim();
+  const TP = normalizePrice(rawTP);
   const SL = normalizePrice(value.SL);
 
   if (!ALLOWED_TYPES.has(type)) {
     return { error: "type không hợp lệ." };
   }
-  if (!TP || !SL) {
-    return { error: "TP và SL phải là giá dương hợp lệ." };
+  if (!SL) {
+    return { error: "SL phải là giá dương hợp lệ." };
+  }
+  if (rawTP !== "" && !TP) {
+    return { error: "TP phải để trống hoặc là giá dương hợp lệ." };
   }
 
   if (MARKET_TYPES.has(type)) {

@@ -22,7 +22,7 @@ Chrome Extension Manifest V3 theo dõi riêng nội dung text mới trong cuộc
 
 Tin nhắn đang hiển thị tại thời điểm bật chỉ được dùng làm mốc và **không được gửi sang MT5**. Kể từ đó, mỗi tin nhắn text mới trong đúng tab/cuộc trò chuyện đang mở sẽ được phân tích. JSON `{}` bị bỏ qua; JSON tín hiệu hợp lệ được tự động đưa vào hàng đợi MT5 mà không cần bấm **Gửi JSON sang MT5**.
 
-Popup hiển thị trạng thái gần nhất: đang chờ, đang phân tích, đã bỏ qua, đã gửi hoặc lỗi; sau mỗi lần xử lý còn có tổng thời gian AI/webhook tính bằng giây. Nút **Lấy và phân tích tin nhắn** và **Gửi JSON sang MT5** vẫn được giữ lại để kiểm tra thủ công khi cần.
+Popup hiển thị toàn bộ **Tin nhắn text gần nhất đã lấy**, cùng trạng thái gần nhất: đang chờ, đang phân tích, đã bỏ qua, đã gửi hoặc lỗi; sau mỗi lần xử lý còn có tổng thời gian AI/webhook tính bằng giây. Tin nhắn gần nhất được lưu trong profile Chrome nên vẫn xem được sau khi đóng và mở lại popup. Nút **Lấy và phân tích tin nhắn** và **Gửi JSON sang MT5** vẫn được giữ lại để kiểm tra thủ công khi cần.
 
 ## Kết nối MetaTrader 5
 
@@ -68,19 +68,33 @@ Giữ terminal chạy. Mở `http://127.0.0.1:8787/health` và xác nhận kết
 4. Trong MT5, vào **Tools → Options → Expert Advisors**.
 5. Bật **Allow WebRequest for listed URL** và thêm `http://127.0.0.1:8787`.
 6. Gắn EA `TelegramSignalReceiver` vào một chart.
-7. Đặt `InpWebhookToken` giống token của server, `InpTradeSymbol` đúng tên symbol broker và `InpLots` theo khối lượng mong muốn.
+7. Đặt `InpWebhookToken` giống token của server, `InpTradeSymbol` đúng tên symbol broker và `InpLots` theo khối lượng cơ sở mong muốn.
+8. Với XAUUSD theo cách tính trong ví dụ, giữ `InpTakeProfitPips=200` và `InpPipSize=0.1`. Khoảng TP luôn là `200 × 0.1 = 20` đơn vị giá.
 
 ### 4. Thử trên tài khoản demo
 
 Để `InpEnableLiveTrading=false`. Gửi một JSON mới từ extension; tab **Experts** của MT5 phải hiện dòng `Dry run`. Tín hiệu dry-run sẽ được đánh dấu đã xử lý và không được dùng lại.
 
-Sau khi kiểm tra đúng symbol, lot, entry, TP và SL, gắn lại EA với `InpEnableLiveTrading=true`, bật **Algo Trading**, rồi bật chế độ tự động trong extension. Chỉ tin nhắn mới xuất hiện sau khi bật mới được xử lý.
+Sau khi kiểm tra đúng symbol, lot, entry, SL và TP cố định do EA tính, gắn lại EA với `InpEnableLiveTrading=true`, bật **Algo Trading**, rồi bật chế độ tự động trong extension. Chỉ tin nhắn mới xuất hiện sau khi bật mới được xử lý.
 
 EA hỗ trợ `buy`, `sell`, `buy now`, `sell now`, `buy limit`, `sell limit`, `buy stop` và `sell stop`. EA kiểm tra hướng giá, quyền giao dịch, bước lot và mã trả về của trade server; tín hiệu không hợp lệ sẽ bị từ chối thay vì tự sửa giá.
 
+### Lot tăng sau SL và TP cố định
+
+- Lot khởi đầu là `InpLots`. Nếu đặt `0.01`, chuỗi sau SL là `0.01 → 0.02 → 0.03 → ...`.
+- EA chỉ tăng chuỗi khi một vị thế có đúng `InpTradeSymbol` và `InpMagicNumber` đóng bởi Stop Loss.
+- Khi một vị thế tương ứng đóng bởi Take Profit, lot kế tiếp quay lại `InpLots`.
+- Trạng thái chuỗi SL được lưu trong thư mục Common Files của MT5 nên không mất khi đóng/mở lại terminal. Trạng thái được tách theo account login, terminal ID, symbol và Magic Number để tài khoản demo không ảnh hưởng tài khoản thật. Lịch sử cũ trước lần đầu cài bản EA này chỉ được dùng làm mốc và không làm tăng lot.
+- Lot vượt quá `SYMBOL_VOLUME_MAX` hoặc không khớp bước lot của broker sẽ bị từ chối, không bị âm thầm làm tròn hoặc giảm xuống.
+- EA luôn bỏ TP do AI gửi và tự tính TP. Với BUY entry `4000`, cấu hình `200` pip và pip size `0.1` cho TP `4020`; với SELL entry `4000`, TP là `3980`.
+- Đối với lệnh market (`buy`, `sell`, `buy now`, `sell now`), TP được tính từ Ask/Bid tại lúc gửi lệnh. Đối với lệnh chờ, TP được tính từ entry trong tín hiệu.
+
 > Hãy thử bằng tài khoản demo trước. Tự động hóa giao dịch có thể mở lệnh thật ngay khi tín hiệu được gửi.
 
+> Cơ chế tăng lot sau mỗi SL làm mức rủi ro tăng liên tục. EA không tự giảm lot ngoài trường hợp chạm TP; khi lot vượt giới hạn broker, tín hiệu tiếp theo sẽ bị từ chối.
+
 Extension bỏ qua ảnh, video, tệp, pinned message và không gửi tên cuộc trò chuyện, người gửi, thời gian, số lượt xem hoặc reaction tới OpenAI.
+Tin nhắn có URL kèm TradingView/link preview vẫn giữ phần text do người gửi nhập; tiêu đề và mô tả tự sinh của preview bị loại bỏ. Khi Telegram tái sử dụng DOM, extension chọn tin text nằm thấp nhất trên màn hình thay vì tin đứng cuối theo thứ tự HTML.
 
 Kết quả khi đủ dữ liệu:
 
@@ -93,7 +107,7 @@ Kết quả khi đủ dữ liệu:
 }
 ```
 
-Nếu không đủ loại lệnh, entry, TP hoặc SL, kết quả là `{}`. Với `buy now` và `sell now`, `entry` luôn là `""`.
+Nếu không đủ loại lệnh, entry bắt buộc hoặc SL, kết quả là `{}`. TP có thể là `""` vì EA luôn thay thế bằng TP cố định. Với `buy now` và `sell now`, `entry` luôn là `""`.
 
 Extension chuẩn hóa cục bộ các lỗi chính tả rõ ràng trong từ khóa lệnh trước khi gửi text tới GPT-5.6 Sol. Ví dụ `SELLL Stopd` thành `SELL STOP`, còn `BUYĐD Stopd` thành `BUY STOP`. Extension không thay đổi các con số giá hoặc những từ thông thường.
 

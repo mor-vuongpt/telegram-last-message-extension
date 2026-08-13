@@ -71,6 +71,17 @@
         Thời gian xử lý: —
       </p>
 
+      <section class="captured-message" aria-live="polite">
+        <label for="capturedMessage">Tin nhắn text gần nhất đã lấy</label>
+        <textarea
+          id="capturedMessage"
+          rows="5"
+          readonly
+          spellcheck="false"
+          aria-label="Tin nhắn text gần nhất extension đã lấy"
+        >Chưa lấy tin nhắn nào.</textarea>
+      </section>
+
       <section id="result" class="result" hidden aria-live="polite">
         <label for="analysisResult">Kết quả JSON</label>
         <textarea

@@ -69,6 +69,7 @@ button:disabled {
 }
 
 .field label,
+.captured-message label,
 .result label {
   display: block;
   margin-bottom: 6px;
@@ -183,6 +184,14 @@ button:disabled {
 
 .result {
   margin-top: 16px;
+}
+
+.captured-message {
+  margin-top: 14px;
+}
+
+.captured-message textarea {
+  min-height: 92px;
 }
 
 textarea {

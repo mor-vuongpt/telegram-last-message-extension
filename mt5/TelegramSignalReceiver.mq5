@@ -3,7 +3,7 @@
 //| Pulls authenticated Forex signals from the local webhook server. |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "1.00"
+#property version   "1.10"
 #property description "Nhan JSON tu webhook Telegram va dat lenh tren MetaTrader 5"
 
 #include <Trade/Trade.mqh>
@@ -18,6 +18,8 @@ input int    InpHttpTimeoutMs    = 3000;
 input group "Trade"
 input string InpTradeSymbol      = "XAUUSD";
 input double InpLots             = 0.01;
+input double InpTakeProfitPips   = 200.0;
+input double InpPipSize          = 0.1;
 input ulong  InpMagicNumber      = 560013;
 input int    InpDeviationPoints  = 20;
 input bool   InpEnableLiveTrading = false;
@@ -34,6 +36,8 @@ struct TradeSignal
 CTrade g_trade;
 bool   g_request_in_progress=false;
 string g_last_signal_id="";
+int    g_consecutive_sl=0;
+ulong  g_last_progression_deal=0;
 
 //+------------------------------------------------------------------+
 string Trimmed(string value)
@@ -232,28 +236,251 @@ bool SaveLastSignalId(const string id)
   }
 
 //+------------------------------------------------------------------+
-bool ValidateVolume(double &volume,string &detail)
+string ProgressionStateFileName()
+  {
+   string safe_symbol="";
+   for(int index=0; index<StringLen(InpTradeSymbol); index++)
+     {
+      ushort character=StringGetCharacter(InpTradeSymbol,index);
+      bool allowed=(character>='A' && character<='Z') ||
+                   (character>='a' && character<='z') ||
+                   (character>='0' && character<='9') ||
+                   character=='_' || character=='-' || character=='.';
+      safe_symbol+=(allowed ? StringSubstr(InpTradeSymbol,index,1) : "_");
+     }
+
+   return "TelegramSignalReceiver_"+InpTerminalId+"_"+
+          (string)AccountInfoInteger(ACCOUNT_LOGIN)+"_"+safe_symbol+"_"+
+          (string)InpMagicNumber+".progression";
+  }
+
+//+------------------------------------------------------------------+
+bool SaveProgressionState()
+  {
+   int handle=FileOpen(ProgressionStateFileName(),FILE_WRITE|FILE_TXT|FILE_ANSI|FILE_COMMON);
+   if(handle==INVALID_HANDLE)
+     {
+      PrintFormat("Cannot persist lot progression. error=%d",GetLastError());
+      return false;
+     }
+
+   FileWrite(handle,"3");
+   FileWrite(handle,(string)AccountInfoInteger(ACCOUNT_LOGIN));
+   FileWrite(handle,InpTradeSymbol);
+   FileWrite(handle,(string)InpMagicNumber);
+   FileWrite(handle,IntegerToString(g_consecutive_sl));
+   FileWrite(handle,(string)g_last_progression_deal);
+   FileClose(handle);
+   return true;
+  }
+
+//+------------------------------------------------------------------+
+bool LoadProgressionState()
+  {
+   int handle=FileOpen(ProgressionStateFileName(),FILE_READ|FILE_TXT|FILE_ANSI|FILE_COMMON);
+   if(handle==INVALID_HANDLE)
+      return false;
+
+   string version=FileReadString(handle);
+   string saved_account=FileReadString(handle);
+   string saved_symbol=FileReadString(handle);
+   string saved_magic=FileReadString(handle);
+   string streak=FileReadString(handle);
+   string last_deal=FileReadString(handle);
+   FileClose(handle);
+
+   if(version!="3" ||
+      (long)StringToInteger(saved_account)!=AccountInfoInteger(ACCOUNT_LOGIN) ||
+      saved_symbol!=InpTradeSymbol ||
+      (ulong)StringToInteger(saved_magic)!=InpMagicNumber)
+      return false;
+
+   g_consecutive_sl=(int)MathMax(0,StringToInteger(streak));
+   g_last_progression_deal=(ulong)StringToInteger(last_deal);
+   return true;
+  }
+
+//+------------------------------------------------------------------+
+bool GetTrackedExitReason(const ulong deal_ticket,ENUM_DEAL_REASON &reason)
+  {
+   if(deal_ticket==0)
+      return false;
+   if(HistoryDealGetString(deal_ticket,DEAL_SYMBOL)!=InpTradeSymbol)
+      return false;
+   if((ulong)HistoryDealGetInteger(deal_ticket,DEAL_MAGIC)!=InpMagicNumber)
+      return false;
+
+   ENUM_DEAL_ENTRY entry=(ENUM_DEAL_ENTRY)HistoryDealGetInteger(deal_ticket,DEAL_ENTRY);
+   if(entry!=DEAL_ENTRY_OUT && entry!=DEAL_ENTRY_OUT_BY)
+      return false;
+
+   reason=(ENUM_DEAL_REASON)HistoryDealGetInteger(deal_ticket,DEAL_REASON);
+   return reason==DEAL_REASON_SL || reason==DEAL_REASON_TP;
+  }
+
+//+------------------------------------------------------------------+
+void ApplyProgressionResult(const ulong deal_ticket,const ENUM_DEAL_REASON reason)
+  {
+   if(deal_ticket==0 || deal_ticket==g_last_progression_deal)
+      return;
+
+   if(reason==DEAL_REASON_SL)
+     {
+      g_consecutive_sl++;
+      PrintFormat("Tracked position hit SL. Consecutive SL=%d; next lot=%.8f",
+                  g_consecutive_sl,InpLots*(g_consecutive_sl+1));
+     }
+   else if(reason==DEAL_REASON_TP)
+     {
+      g_consecutive_sl=0;
+      PrintFormat("Tracked position hit TP. Lot progression reset to %.8f",InpLots);
+     }
+
+   g_last_progression_deal=deal_ticket;
+   SaveProgressionState();
+  }
+
+//+------------------------------------------------------------------+
+void SynchronizeProgressionState(const bool state_loaded)
+  {
+   if(!HistorySelect(0,TimeCurrent()))
+     {
+      PrintFormat("Cannot select deal history for lot progression. error=%d",GetLastError());
+      return;
+     }
+
+   ulong tickets[];
+   ENUM_DEAL_REASON reasons[];
+   int total=HistoryDealsTotal();
+   for(int index=0; index<total; index++)
+     {
+      ulong ticket=HistoryDealGetTicket(index);
+      ENUM_DEAL_REASON reason;
+      if(!GetTrackedExitReason(ticket,reason))
+         continue;
+
+      int count=ArraySize(tickets);
+      ArrayResize(tickets,count+1);
+      ArrayResize(reasons,count+1);
+      tickets[count]=ticket;
+      reasons[count]=reason;
+     }
+
+   int count=ArraySize(tickets);
+   if(!state_loaded)
+     {
+      // Existing account history predates installation of this version. Use it
+      // only as a baseline so an old SL does not unexpectedly increase the lot.
+      g_consecutive_sl=0;
+      g_last_progression_deal=(count>0 ? tickets[count-1] : 0);
+      SaveProgressionState();
+      return;
+     }
+
+   int start=0;
+   if(g_last_progression_deal!=0)
+     {
+      start=-1;
+      for(int index=0; index<count; index++)
+        {
+         if(tickets[index]==g_last_progression_deal)
+           {
+            start=index+1;
+            break;
+           }
+        }
+
+      if(start<0)
+        {
+         // The broker may have pruned old history. Preserve the current streak
+         // and establish a new baseline instead of replaying unknown old deals.
+         g_last_progression_deal=(count>0 ? tickets[count-1] : 0);
+         SaveProgressionState();
+         return;
+        }
+     }
+
+   for(int index=start; index<count; index++)
+      ApplyProgressionResult(tickets[index],reasons[index]);
+  }
+
+//+------------------------------------------------------------------+
+bool ValidateVolume(const double requested_volume,double &volume,string &detail)
   {
    double minimum=SymbolInfoDouble(InpTradeSymbol,SYMBOL_VOLUME_MIN);
    double maximum=SymbolInfoDouble(InpTradeSymbol,SYMBOL_VOLUME_MAX);
    double step=SymbolInfoDouble(InpTradeSymbol,SYMBOL_VOLUME_STEP);
 
-   if(InpLots<minimum || InpLots>maximum || step<=0.0)
+   if(requested_volume<minimum || requested_volume>maximum || step<=0.0)
      {
       detail=StringFormat("Invalid lot %.8f; broker min=%.8f max=%.8f step=%.8f",
-                          InpLots,minimum,maximum,step);
+                          requested_volume,minimum,maximum,step);
       return false;
      }
 
-   double steps=MathRound((InpLots-minimum)/step);
+   double steps=MathRound((requested_volume-minimum)/step);
    double aligned=NormalizeDouble(minimum+steps*step,8);
-   if(MathAbs(aligned-InpLots)>0.00000001)
+   if(MathAbs(aligned-requested_volume)>0.00000001)
      {
-      detail=StringFormat("Lot %.8f is not aligned to broker step %.8f",InpLots,step);
+      detail=StringFormat("Lot %.8f is not aligned to broker step %.8f",requested_volume,step);
       return false;
      }
 
    volume=aligned;
+   return true;
+  }
+
+//+------------------------------------------------------------------+
+bool ApplyForcedTakeProfit(TradeSignal &signal,const string type,string &detail)
+  {
+   if(InpTakeProfitPips<=0.0 || InpPipSize<=0.0)
+     {
+      detail="InpTakeProfitPips and InpPipSize must be positive";
+      return false;
+     }
+
+   bool is_buy=(type=="buy" || type=="buy now" ||
+                type=="buy limit" || type=="buy stop");
+   bool is_sell=(type=="sell" || type=="sell now" ||
+                 type=="sell limit" || type=="sell stop");
+   if(!is_buy && !is_sell)
+     {
+      detail="Unsupported order type: "+type;
+      return false;
+     }
+
+   double reference_entry=signal.entry;
+   if(type=="buy" || type=="buy now" || type=="sell" || type=="sell now")
+     {
+      MqlTick tick;
+      if(!SymbolInfoTick(InpTradeSymbol,tick))
+        {
+         detail="Cannot read current Bid/Ask for forced TP";
+         return false;
+        }
+      reference_entry=(is_buy ? tick.ask : tick.bid);
+     }
+
+   if(reference_entry<=0.0)
+     {
+      detail="Cannot calculate forced TP without a positive entry";
+      return false;
+     }
+
+   double distance=InpTakeProfitPips*InpPipSize;
+   double calculated_tp=reference_entry+(is_buy ? distance : -distance);
+   if(calculated_tp<=0.0)
+     {
+      detail="Calculated forced TP is not positive";
+      return false;
+     }
+
+   double tick_size=SymbolInfoDouble(InpTradeSymbol,SYMBOL_TRADE_TICK_SIZE);
+   if(tick_size>0.0)
+      calculated_tp=MathRound(calculated_tp/tick_size)*tick_size;
+
+   int digits=(int)SymbolInfoInteger(InpTradeSymbol,SYMBOL_DIGITS);
+   signal.tp=NormalizeDouble(calculated_tp,digits);
    return true;
   }
 
@@ -351,19 +578,23 @@ bool PlaceSignal(const TradeSignal &signal,string &detail)
       return false;
      }
 
+   double requested_volume=InpLots*(g_consecutive_sl+1);
    double volume=0.0;
-   if(!ValidateVolume(volume,detail))
+   if(!ValidateVolume(requested_volume,volume,detail))
       return false;
 
    string type=signal.type;
    StringToLower(type);
-   if(!ValidatePrices(signal,type,detail))
+   TradeSignal effective_signal=signal;
+   if(!ApplyForcedTakeProfit(effective_signal,type,detail))
+      return false;
+   if(!ValidatePrices(effective_signal,type,detail))
       return false;
 
    int digits=(int)SymbolInfoInteger(InpTradeSymbol,SYMBOL_DIGITS);
-   double entry=NormalizeDouble(signal.entry,digits);
-   double sl=NormalizeDouble(signal.sl,digits);
-   double tp=NormalizeDouble(signal.tp,digits);
+   double entry=NormalizeDouble(effective_signal.entry,digits);
+   double sl=NormalizeDouble(effective_signal.sl,digits);
+   double tp=NormalizeDouble(effective_signal.tp,digits);
    string comment="TG:"+StringSubstr(signal.id,0,20);
    bool sent=false;
 
@@ -382,7 +613,8 @@ bool PlaceSignal(const TradeSignal &signal,string &detail)
       sent=g_trade.SellStop(volume,entry,InpTradeSymbol,sl,tp,ORDER_TIME_GTC,0,comment);
 
    uint retcode=g_trade.ResultRetcode();
-   detail=StringFormat("retcode=%u %s order=%I64u deal=%I64u",
+   detail=StringFormat("lots=%.8f forced_TP=%.8f retcode=%u %s order=%I64u deal=%I64u",
+                       volume,tp,
                        retcode,g_trade.ResultRetcodeDescription(),
                        g_trade.ResultOrder(),g_trade.ResultDeal());
    return sent && IsSuccessfulRetcode(retcode);
@@ -403,6 +635,11 @@ int OnInit()
      }
    if(BaseUrl()=="")
       return INIT_PARAMETERS_INCORRECT;
+   if(InpLots<=0.0 || InpTakeProfitPips<=0.0 || InpPipSize<=0.0)
+     {
+      Print("InpLots, InpTakeProfitPips and InpPipSize must be positive.");
+      return INIT_PARAMETERS_INCORRECT;
+     }
    if(!SymbolSelect(InpTradeSymbol,true))
      {
       Print("Cannot select trade symbol: ",InpTradeSymbol);
@@ -413,6 +650,8 @@ int OnInit()
    g_trade.SetDeviationInPoints(InpDeviationPoints);
    g_trade.SetAsyncMode(false);
    LoadLastSignalId();
+   bool progression_state_loaded=LoadProgressionState();
+   SynchronizeProgressionState(progression_state_loaded);
 
    if(!EventSetTimer((int)MathMax(1,InpPollSeconds)))
      {
@@ -422,6 +661,9 @@ int OnInit()
 
    Print("Add ",BaseUrl()," to Tools > Options > Expert Advisors > Allow WebRequest for listed URL.");
    Print("Live trading is ",InpEnableLiveTrading ? "ENABLED" : "DISABLED (dry-run mode)",".");
+   PrintFormat("Lot progression: consecutive SL=%d next lot=%.8f. Forced TP=%.2f pips x %.8f price units.",
+               g_consecutive_sl,InpLots*(g_consecutive_sl+1),
+               InpTakeProfitPips,InpPipSize);
    return INIT_SUCCEEDED;
   }
 
@@ -429,6 +671,21 @@ int OnInit()
 void OnDeinit(const int reason)
   {
    EventKillTimer();
+  }
+
+//+------------------------------------------------------------------+
+void OnTradeTransaction(const MqlTradeTransaction &trans,
+                        const MqlTradeRequest &request,
+                        const MqlTradeResult &result)
+  {
+   if(trans.type!=TRADE_TRANSACTION_DEAL_ADD || trans.deal==0)
+      return;
+   if(!HistoryDealSelect(trans.deal))
+      return;
+
+   ENUM_DEAL_REASON reason;
+   if(GetTrackedExitReason(trans.deal,reason))
+      ApplyProgressionResult(trans.deal,reason);
   }
 
 //+------------------------------------------------------------------+
@@ -457,9 +714,16 @@ void OnTimer()
 
    if(!InpEnableLiveTrading)
      {
+      double dry_run_lots=InpLots*(g_consecutive_sl+1);
+      TradeSignal dry_run_signal=signal;
+      string dry_run_type=signal.type;
+      StringToLower(dry_run_type);
+      string tp_detail="";
+      ApplyForcedTakeProfit(dry_run_signal,dry_run_type,tp_detail);
       result_status="dry_run";
       detail=StringFormat("Dry run: type=%s symbol=%s lots=%.8f entry=%.8f TP=%.8f SL=%.8f",
-                          signal.type,InpTradeSymbol,InpLots,signal.entry,signal.tp,signal.sl);
+                          signal.type,InpTradeSymbol,dry_run_lots,signal.entry,
+                          dry_run_signal.tp,signal.sl);
       Print(detail);
      }
    else if(PlaceSignal(signal,detail))

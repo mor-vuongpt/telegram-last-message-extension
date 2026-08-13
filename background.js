@@ -8,6 +8,7 @@ const {
   AUTO_TRADE_TAB_ID_STORAGE_KEY,
   AUTO_TRADE_STATUS_STORAGE_KEY,
   AUTO_LAST_FINGERPRINT_STORAGE_KEY,
+  LAST_CAPTURED_MESSAGE_STORAGE_KEY,
   analyzeForexMessage,
   normalizeWebhookConfiguration,
   sendSignalToWebhook,
@@ -161,6 +162,9 @@ async function processAutomaticMessage(request, sender) {
   automaticMessageProcessing = true;
   const startedAt = performance.now();
   try {
+    await chrome.storage.local.set({
+      [LAST_CAPTURED_MESSAGE_STORAGE_KEY]: text,
+    });
     await setAutomaticStatus("processing", "Đang phân tích tin nhắn mới bằng GPT-5.6 Sol…", {
       preview: text.slice(0, 160),
     });

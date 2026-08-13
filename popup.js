@@ -4,6 +4,7 @@ const {
   WEBHOOK_TOKEN_STORAGE_KEY,
   AUTO_TRADE_ENABLED_STORAGE_KEY,
   AUTO_TRADE_STATUS_STORAGE_KEY,
+  LAST_CAPTURED_MESSAGE_STORAGE_KEY,
   DEFAULT_WEBHOOK_URL,
   analyzeForexMessage,
   normalizeWebhookConfiguration,
@@ -16,6 +17,7 @@ const result = document.querySelector("#result");
 const analysisResult = document.querySelector("#analysisResult");
 const apiKeyInput = document.querySelector("#openaiApiKey");
 const elapsedTime = document.querySelector("#elapsedTime");
+const capturedMessage = document.querySelector("#capturedMessage");
 const webhookUrlInput = document.querySelector("#webhookUrl");
 const webhookTokenInput = document.querySelector("#webhookToken");
 const autoSendWebhookInput = document.querySelector("#autoSendWebhook");
@@ -99,10 +101,13 @@ async function loadSettings() {
     WEBHOOK_TOKEN_STORAGE_KEY,
     AUTO_TRADE_ENABLED_STORAGE_KEY,
     AUTO_TRADE_STATUS_STORAGE_KEY,
+    LAST_CAPTURED_MESSAGE_STORAGE_KEY,
   ]);
   apiKeyInput.value = saved[API_KEY_STORAGE_KEY] || "";
   webhookUrlInput.value = saved[WEBHOOK_URL_STORAGE_KEY] || DEFAULT_WEBHOOK_URL;
   webhookTokenInput.value = saved[WEBHOOK_TOKEN_STORAGE_KEY] || "";
+  capturedMessage.value =
+    saved[LAST_CAPTURED_MESSAGE_STORAGE_KEY] || "Chưa lấy tin nhắn nào.";
   renderAutomationStatus(
     Boolean(saved[AUTO_TRADE_ENABLED_STORAGE_KEY]),
     saved[AUTO_TRADE_STATUS_STORAGE_KEY] || null
@@ -200,6 +205,11 @@ getMessageButton.addEventListener("click", async () => {
     if (!response?.ok) {
       throw new Error(response?.error || "Không tìm thấy tin nhắn text.");
     }
+
+    capturedMessage.value = response.text;
+    await chrome.storage.local.set({
+      [LAST_CAPTURED_MESSAGE_STORAGE_KEY]: response.text,
+    });
 
     setStatus("Đang phân tích bằng GPT-5.6 Sol…");
     const signal = await analyzeForexMessage(response.text, apiKey);
@@ -318,6 +328,11 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     autoSendWebhookInput.checked = Boolean(
       changes[AUTO_TRADE_ENABLED_STORAGE_KEY].newValue
     );
+  }
+  if (changes[LAST_CAPTURED_MESSAGE_STORAGE_KEY]) {
+    capturedMessage.value =
+      changes[LAST_CAPTURED_MESSAGE_STORAGE_KEY].newValue ||
+      "Chưa lấy tin nhắn nào.";
   }
 });
 

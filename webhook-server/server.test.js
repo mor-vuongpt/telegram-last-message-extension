@@ -29,6 +29,14 @@ test("validates market and pending signals", () => {
       },
     }
   );
+  assert.deepEqual(
+    validateSignal({ type: "buy now", entry: "", TP: "", SL: "3990" }),
+    { signal: { type: "buy now", entry: "", TP: "", SL: "3990" } }
+  );
+  assert.match(
+    validateSignal({ type: "buy now", entry: "", TP: "wrong", SL: "3990" }).error,
+    /TP/
+  );
   assert.match(validateSignal({}).error, /type/);
 });
 
@@ -57,7 +65,7 @@ test("queues, leases and acknowledges a signal over HTTP", async (context) => {
     body: JSON.stringify({
       type: "sell limit",
       entry: "4156",
-      TP: "4132",
+      TP: "",
       SL: "4160",
     }),
   });
@@ -71,7 +79,7 @@ test("queues, leases and acknowledges a signal over HTTP", async (context) => {
     body: JSON.stringify({
       type: "sell limit",
       entry: "4156",
-      TP: "4132",
+      TP: "",
       SL: "4160",
     }),
   });
@@ -86,7 +94,7 @@ test("queues, leases and acknowledges a signal over HTTP", async (context) => {
     id: created.id,
     type: "sell limit",
     entry: "4156",
-    TP: "4132",
+    TP: "",
     SL: "4160",
   });
 
