@@ -1,15 +1,18 @@
 {
   "manifest_version": 3,
   "name": "Telegram - Tin nhắn cuối",
-  "version": "1.5.2",
+  "version": "1.8.1",
+  "minimum_chrome_version": "116",
   "description": "Tự động đọc tin nhắn text mới trên Telegram Web, phân tích Forex và gửi tín hiệu tới MetaTrader 5.",
   "permissions": [
     "activeTab",
     "clipboardWrite",
+    "sidePanel",
     "scripting",
     "storage"
   ],
   "host_permissions": [
+    "https://web.telegram.org/*",
     "https://api.openai.com/*",
     "http://127.0.0.1/*",
     "http://localhost/*"
@@ -28,8 +31,10 @@
   "background": {
     "service_worker": "background.js"
   },
+  "side_panel": {
+    "default_path": "popup.html"
+  },
   "action": {
-    "default_title": "Lấy tin nhắn cuối",
-    "default_popup": "popup.html"
+    "default_title": "Mở sidebar Telegram Forex"
   }
 }

@@ -33,9 +33,44 @@ test("validates market and pending signals", () => {
     validateSignal({ type: "buy now", entry: "", TP: "", SL: "3990" }),
     { signal: { type: "buy now", entry: "", TP: "", SL: "3990" } }
   );
+  assert.deepEqual(
+    validateSignal({ type: "buy now", entry: "", TP: "", SL: "" }),
+    { signal: { type: "buy now", entry: "", TP: "", SL: "" } }
+  );
+  assert.deepEqual(
+    validateSignal({ type: "sell now", entry: "", TP: "4132", SL: "" }),
+    { signal: { type: "sell now", entry: "", TP: "4132", SL: "" } }
+  );
+  for (const type of ["buy limit", "sell limit", "buy stop", "sell stop"]) {
+    assert.deepEqual(
+      validateSignal({ type, entry: "4347.135", TP: "", SL: "" }),
+      {
+        signal: {
+          type,
+          entry: "4347.135",
+          TP: "",
+          SL: "",
+        },
+      }
+    );
+  }
   assert.match(
     validateSignal({ type: "buy now", entry: "", TP: "wrong", SL: "3990" }).error,
     /TP/
+  );
+  assert.match(
+    validateSignal({ type: "buy now", entry: "", TP: "", SL: "wrong" }).error,
+    /SL/
+  );
+  for (const type of ["buy limit", "sell limit", "buy stop", "sell stop"]) {
+    assert.match(
+      validateSignal({ type, entry: "", TP: "", SL: "" }).error,
+      /entry/
+    );
+  }
+  assert.match(
+    validateSignal({ type: "buy", entry: "4347.135", TP: "", SL: "" }).error,
+    /SL/
   );
   assert.match(validateSignal({}).error, /type/);
 });
@@ -66,7 +101,7 @@ test("queues, leases and acknowledges a signal over HTTP", async (context) => {
       type: "sell limit",
       entry: "4156",
       TP: "",
-      SL: "4160",
+      SL: "",
     }),
   });
   assert.equal(createResponse.status, 202);
@@ -80,7 +115,7 @@ test("queues, leases and acknowledges a signal over HTTP", async (context) => {
       type: "sell limit",
       entry: "4156",
       TP: "",
-      SL: "4160",
+      SL: "",
     }),
   });
   assert.equal(duplicateResponse.status, 200);
@@ -95,7 +130,7 @@ test("queues, leases and acknowledges a signal over HTTP", async (context) => {
     type: "sell limit",
     entry: "4156",
     TP: "",
-    SL: "4160",
+    SL: "",
   });
 
   const ackResponse = await fetch(
@@ -117,4 +152,29 @@ test("queues, leases and acknowledges a signal over HTTP", async (context) => {
     { headers }
   );
   assert.deepEqual(await emptyResponse.json(), {});
+
+  const marketNowResponse = await fetch(`${baseUrl}/api/signals`, {
+    method: "POST",
+    headers: { ...headers, "Idempotency-Key": "market-now-without-stops" },
+    body: JSON.stringify({
+      type: "buy now",
+      entry: "",
+      TP: "",
+      SL: "",
+    }),
+  });
+  assert.equal(marketNowResponse.status, 202);
+  const marketNow = await marketNowResponse.json();
+
+  const marketNowNextResponse = await fetch(
+    `${baseUrl}/api/signals/next?terminal_id=mt5-test`,
+    { headers }
+  );
+  assert.deepEqual(await marketNowNextResponse.json(), {
+    id: marketNow.id,
+    type: "buy now",
+    entry: "",
+    TP: "",
+    SL: "",
+  });
 });

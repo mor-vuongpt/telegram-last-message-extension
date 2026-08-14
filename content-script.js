@@ -104,6 +104,50 @@ let monitorDebounceId = null;
 let monitorIntervalId = null;
 let monitorQueueRunning = false;
 const automaticMessageQueue = [];
+let sidePanelOpenRequestInProgress = false;
+let extensionContextInvalidated = false;
+const SIDE_PANEL_AUTO_OPENED_STORAGE_KEY = "telegramSidePanelAutoOpened";
+
+function getExtensionRuntime() {
+  const runtime = globalThis.chrome?.runtime;
+  return runtime && typeof runtime.sendMessage === "function" ? runtime : null;
+}
+
+function getExtensionStorage() {
+  const storage = globalThis.chrome?.storage?.local;
+  return storage && typeof storage.get === "function" ? storage : null;
+}
+
+function stopInvalidatedExtensionContext() {
+  if (extensionContextInvalidated) {
+    return;
+  }
+
+  extensionContextInvalidated = true;
+  automaticMonitorEnabled = false;
+  sidePanelOpenRequestInProgress = false;
+  automaticMessageQueue.length = 0;
+  clearTimeout(monitorDebounceId);
+  clearInterval(monitorIntervalId);
+  monitorDebounceId = null;
+  monitorIntervalId = null;
+  document.removeEventListener(
+    "click",
+    requestSidePanelOnFirstInteraction,
+    true
+  );
+  window.removeEventListener("hashchange", scheduleAutomaticInspection);
+  console.info(
+    "Telegram extension context was reloaded; the inactive content script has stopped."
+  );
+}
+
+function isInvalidatedExtensionContext(error) {
+  return (
+    !getExtensionRuntime() ||
+    /extension context invalidated/i.test(error?.message || "")
+  );
+}
 
 function isElementVisible(element) {
   if (!(element instanceof HTMLElement)) {
@@ -413,7 +457,13 @@ async function processAutomaticMessageQueue() {
     while (automaticMonitorEnabled && automaticMessageQueue.length) {
       const descriptor = automaticMessageQueue.shift();
       try {
-        const response = await chrome.runtime.sendMessage({
+        const runtime = getExtensionRuntime();
+        if (!runtime) {
+          stopInvalidatedExtensionContext();
+          return;
+        }
+
+        const response = await runtime.sendMessage({
           type: "TELEGRAM_NEW_TEXT_MESSAGE",
           text: descriptor.text,
           fingerprint: descriptor.fingerprint,
@@ -422,6 +472,10 @@ async function processAutomaticMessageQueue() {
           throw new Error(response?.error || "Unknown error");
         }
       } catch (error) {
+        if (isInvalidatedExtensionContext(error)) {
+          stopInvalidatedExtensionContext();
+          return;
+        }
         console.error("Telegram MT5 automation:", error);
         descriptor.attempts = (descriptor.attempts || 0) + 1;
         if (descriptor.attempts < 3 && automaticMonitorEnabled) {
@@ -520,7 +574,17 @@ automaticObserver.observe(document.documentElement, {
 
 window.addEventListener("hashchange", scheduleAutomaticInspection);
 
-chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
+const extensionRuntime = getExtensionRuntime();
+
+extensionRuntime?.onMessage.addListener((request, _sender, sendResponse) => {
+  if (request?.type === "PING_TELEGRAM_CONTEXT") {
+    sendResponse({
+      ok: true,
+      isTelegram: location.hostname === "web.telegram.org",
+    });
+    return false;
+  }
+
   if (request?.type === "SET_TELEGRAM_AUTO_MONITOR") {
     try {
       sendResponse({ ok: true, ...setAutomaticMonitorEnabled(request.enabled) });
@@ -541,13 +605,68 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   return false;
 });
 
-chrome.runtime
-  .sendMessage({ type: "TELEGRAM_MONITOR_READY" })
+extensionRuntime
+  ?.sendMessage({ type: "TELEGRAM_MONITOR_READY" })
   .then((response) => {
     if (response?.ok && response.enabled) {
       setAutomaticMonitorEnabled(true);
     }
   })
+  .catch((error) => {
+    if (isInvalidatedExtensionContext(error)) {
+      stopInvalidatedExtensionContext();
+    }
+  });
+
+function requestSidePanelOnFirstInteraction(event) {
+  if (!event.isTrusted || sidePanelOpenRequestInProgress) {
+    return;
+  }
+
+  const runtime = getExtensionRuntime();
+  if (!runtime) {
+    stopInvalidatedExtensionContext();
+    return;
+  }
+
+  sidePanelOpenRequestInProgress = true;
+  runtime
+    .sendMessage({ type: "OPEN_SIDE_PANEL_FROM_TELEGRAM" })
+    .then((response) => {
+      if (response?.ok && response.opened) {
+        const storage = getExtensionStorage();
+        storage?.set({ [SIDE_PANEL_AUTO_OPENED_STORAGE_KEY]: true });
+        document.removeEventListener(
+          "click",
+          requestSidePanelOnFirstInteraction,
+          true
+        );
+        return;
+      }
+      sidePanelOpenRequestInProgress = false;
+    })
+    .catch((error) => {
+      if (isInvalidatedExtensionContext(error)) {
+        stopInvalidatedExtensionContext();
+        return;
+      }
+      sidePanelOpenRequestInProgress = false;
+    });
+}
+
+getExtensionStorage()
+  ?.get(SIDE_PANEL_AUTO_OPENED_STORAGE_KEY)
+  .then((saved) => {
+    if (!saved[SIDE_PANEL_AUTO_OPENED_STORAGE_KEY]) {
+      document.addEventListener(
+        "click",
+        requestSidePanelOnFirstInteraction,
+        true
+      );
+    }
+  })
   .catch(() => {
-    // The extension may be reloading. The background will reconnect later.
+    if (getExtensionRuntime()) {
+      document.addEventListener("click", requestSidePanelOnFirstInteraction, true);
+    }
   });

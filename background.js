@@ -15,9 +15,102 @@ const {
 } = ForexCore;
 
 let automaticMessageProcessing = false;
+const LAST_ACTIVE_TELEGRAM_TAB_STORAGE_KEY = "lastActiveTelegramTabId";
+
+function configureSidePanel() {
+  chrome.sidePanel
+    .setPanelBehavior({ openPanelOnActionClick: true })
+    .catch((error) => console.error("Cannot configure side panel:", error));
+}
+
+configureSidePanel();
+chrome.runtime.onInstalled.addListener(configureSidePanel);
+chrome.runtime.onStartup.addListener(configureSidePanel);
 
 function isTelegramUrl(url) {
   return typeof url === "string" && url.startsWith("https://web.telegram.org/");
+}
+
+function isTelegramSender(sender) {
+  return Boolean(
+    sender.tab?.id &&
+      [sender.url, sender.documentUrl, sender.tab.url].some(isTelegramUrl)
+  );
+}
+
+async function verifyTelegramTab(tab) {
+  if (!tab?.id) {
+    return false;
+  }
+  if (isTelegramUrl(tab.url) || isTelegramUrl(tab.pendingUrl)) {
+    return true;
+  }
+
+  return chrome.tabs
+    .sendMessage(tab.id, { type: "PING_TELEGRAM_CONTEXT" })
+    .then((response) => response?.ok === true && response.isTelegram === true)
+    .catch(() => false);
+}
+
+function normalizedTelegramTab(tab) {
+  return {
+    ...tab,
+    url: isTelegramUrl(tab.url)
+      ? tab.url
+      : isTelegramUrl(tab.pendingUrl)
+        ? tab.pendingUrl
+        : "https://web.telegram.org/",
+  };
+}
+
+async function rememberTelegramTab(tab, sourceUrl = "") {
+  if (tab?.id && (isTelegramUrl(sourceUrl) || (await verifyTelegramTab(tab)))) {
+    await chrome.storage.local.set({
+      [LAST_ACTIVE_TELEGRAM_TAB_STORAGE_KEY]: tab.id,
+    });
+  }
+}
+
+async function resolveActiveTelegramTab() {
+  const [activeTab] = await chrome.tabs.query({
+    active: true,
+    lastFocusedWindow: true,
+  });
+  if (activeTab?.id && (await verifyTelegramTab(activeTab))) {
+    await rememberTelegramTab(activeTab);
+    return normalizedTelegramTab(activeTab);
+  }
+
+  const saved = await chrome.storage.local.get(
+    LAST_ACTIVE_TELEGRAM_TAB_STORAGE_KEY
+  );
+  const savedTabId = saved[LAST_ACTIVE_TELEGRAM_TAB_STORAGE_KEY];
+  if (Number.isInteger(savedTabId)) {
+    const savedTab = await chrome.tabs.get(savedTabId).catch(() => null);
+    if (savedTab?.id && (await verifyTelegramTab(savedTab))) {
+      return normalizedTelegramTab(savedTab);
+    }
+  }
+
+  const allTabs = await chrome.tabs.query({});
+  const verifiedTabs = [];
+  for (const tab of allTabs) {
+    if (await verifyTelegramTab(tab)) {
+      verifiedTabs.push(normalizedTelegramTab(tab));
+    }
+  }
+  const fallbackTab = verifiedTabs
+    .sort(
+      (first, second) =>
+        Number(second.active) - Number(first.active) ||
+        (second.lastAccessed || 0) - (first.lastAccessed || 0)
+    )[0];
+  if (!fallbackTab) {
+    throw new Error("Hãy mở Telegram Web và chọn một cuộc trò chuyện trước.");
+  }
+
+  await rememberTelegramTab(fallbackTab);
+  return fallbackTab;
 }
 
 async function setAutomaticStatus(state, message, extra = {}) {
@@ -138,7 +231,7 @@ async function createIdempotencyKey(fingerprint) {
 }
 
 async function processAutomaticMessage(request, sender) {
-  if (!sender.tab?.id || !isTelegramUrl(sender.tab.url)) {
+  if (!isTelegramSender(sender)) {
     throw new Error("Nguồn tin nhắn không phải Telegram Web.");
   }
   if (automaticMessageProcessing) {
@@ -217,9 +310,11 @@ async function processAutomaticMessage(request, sender) {
 }
 
 async function handleMonitorReady(sender) {
-  if (!sender.tab?.id || !isTelegramUrl(sender.tab.url)) {
+  if (!isTelegramSender(sender)) {
     return { enabled: false };
   }
+
+  await rememberTelegramTab(sender.tab, sender.url || sender.documentUrl);
 
   const saved = await chrome.storage.local.get([
     AUTO_TRADE_ENABLED_STORAGE_KEY,
@@ -256,6 +351,29 @@ async function handleMonitorReady(sender) {
   return { enabled: true };
 }
 
+async function openSidePanelFromTelegram(sender) {
+  if (!isTelegramSender(sender) || !Number.isInteger(sender.tab.windowId)) {
+    throw new Error("Chỉ có thể tự mở sidebar từ tab Telegram Web.");
+  }
+
+  await rememberTelegramTab(sender.tab, sender.url || sender.documentUrl);
+  await chrome.sidePanel.open({ windowId: sender.tab.windowId });
+  return { opened: true };
+}
+
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+  chrome.tabs
+    .get(tabId)
+    .then(rememberTelegramTab)
+    .catch(() => {});
+});
+
+chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
+  if (tab.active && (changeInfo.url || changeInfo.status === "complete")) {
+    rememberTelegramTab(tab).catch(() => {});
+  }
+});
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   let operation;
 
@@ -275,6 +393,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     operation = handleMonitorReady(sender);
   } else if (request?.type === "TELEGRAM_NEW_TEXT_MESSAGE") {
     operation = processAutomaticMessage(request, sender);
+  } else if (request?.type === "OPEN_SIDE_PANEL_FROM_TELEGRAM") {
+    operation = openSidePanelFromTelegram(sender);
+  } else if (request?.type === "GET_ACTIVE_TELEGRAM_TAB") {
+    operation = resolveActiveTelegramTab().then((tab) => ({
+      tab: {
+        id: tab.id,
+        url: tab.url,
+        windowId: tab.windowId,
+      },
+    }));
   } else {
     return false;
   }

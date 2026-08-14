@@ -3,7 +3,7 @@
 //| Pulls authenticated Forex signals from the local webhook server. |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "1.10"
+#property version   "1.12"
 #property description "Nhan JSON tu webhook Telegram va dat lenh tren MetaTrader 5"
 
 #include <Trade/Trade.mqh>
@@ -487,9 +487,17 @@ bool ApplyForcedTakeProfit(TradeSignal &signal,const string type,string &detail)
 //+------------------------------------------------------------------+
 bool ValidatePrices(const TradeSignal &signal,const string type,string &detail)
   {
-   if(signal.tp<=0.0 || signal.sl<=0.0)
+   bool allows_empty_sl=(type=="buy now" || type=="sell now" ||
+                         type=="buy limit" || type=="sell limit" ||
+                         type=="buy stop" || type=="sell stop");
+   if(signal.tp<=0.0)
      {
-      detail="TP or SL is not a positive number";
+      detail="TP is not a positive number";
+      return false;
+     }
+   if(signal.sl<0.0 || (!allows_empty_sl && signal.sl<=0.0))
+     {
+      detail="SL is required for plain BUY and SELL orders";
       return false;
      }
 
@@ -502,9 +510,9 @@ bool ValidatePrices(const TradeSignal &signal,const string type,string &detail)
 
    if(type=="buy" || type=="buy now")
      {
-      if(signal.sl>=tick.ask || signal.tp<=tick.ask)
+      if((signal.sl>0.0 && signal.sl>=tick.ask) || signal.tp<=tick.ask)
         {
-         detail="BUY requires SL below Ask and TP above Ask";
+         detail="BUY requires any supplied SL below Ask and TP above Ask";
          return false;
         }
       return true;
@@ -512,9 +520,9 @@ bool ValidatePrices(const TradeSignal &signal,const string type,string &detail)
 
    if(type=="sell" || type=="sell now")
      {
-      if(signal.sl<=tick.bid || signal.tp>=tick.bid)
+      if((signal.sl>0.0 && signal.sl<=tick.bid) || signal.tp>=tick.bid)
         {
-         detail="SELL requires SL above Bid and TP below Bid";
+         detail="SELL requires any supplied SL above Bid and TP below Bid";
          return false;
         }
       return true;
@@ -527,27 +535,31 @@ bool ValidatePrices(const TradeSignal &signal,const string type,string &detail)
      }
 
    if(type=="buy limit" &&
-      (signal.entry>=tick.ask || signal.sl>=signal.entry || signal.tp<=signal.entry))
+      (signal.entry>=tick.ask ||
+       (signal.sl>0.0 && signal.sl>=signal.entry) || signal.tp<=signal.entry))
      {
-      detail="BUY LIMIT requires entry below Ask, SL below entry, TP above entry";
+      detail="BUY LIMIT requires entry below Ask, any supplied SL below entry, and TP above entry";
       return false;
      }
    if(type=="sell limit" &&
-      (signal.entry<=tick.bid || signal.sl<=signal.entry || signal.tp>=signal.entry))
+      (signal.entry<=tick.bid ||
+       (signal.sl>0.0 && signal.sl<=signal.entry) || signal.tp>=signal.entry))
      {
-      detail="SELL LIMIT requires entry above Bid, SL above entry, TP below entry";
+      detail="SELL LIMIT requires entry above Bid, any supplied SL above entry, and TP below entry";
       return false;
      }
    if(type=="buy stop" &&
-      (signal.entry<=tick.ask || signal.sl>=signal.entry || signal.tp<=signal.entry))
+      (signal.entry<=tick.ask ||
+       (signal.sl>0.0 && signal.sl>=signal.entry) || signal.tp<=signal.entry))
      {
-      detail="BUY STOP requires entry above Ask, SL below entry, TP above entry";
+      detail="BUY STOP requires entry above Ask, any supplied SL below entry, and TP above entry";
       return false;
      }
    if(type=="sell stop" &&
-      (signal.entry>=tick.bid || signal.sl<=signal.entry || signal.tp>=signal.entry))
+      (signal.entry>=tick.bid ||
+       (signal.sl>0.0 && signal.sl<=signal.entry) || signal.tp>=signal.entry))
      {
-      detail="SELL STOP requires entry below Bid, SL above entry, TP below entry";
+      detail="SELL STOP requires entry below Bid, any supplied SL above entry, and TP below entry";
       return false;
      }
 
@@ -598,6 +610,9 @@ bool PlaceSignal(const TradeSignal &signal,string &detail)
    string comment="TG:"+StringSubstr(signal.id,0,20);
    bool sent=false;
 
+   if(sl<=0.0)
+      Print("WARNING: placing ",type," without Stop Loss because the Telegram signal omitted SL.");
+
    g_trade.SetTypeFillingBySymbol(InpTradeSymbol);
    if(type=="buy" || type=="buy now")
       sent=g_trade.Buy(volume,InpTradeSymbol,0.0,sl,tp,comment);
@@ -613,8 +628,9 @@ bool PlaceSignal(const TradeSignal &signal,string &detail)
       sent=g_trade.SellStop(volume,entry,InpTradeSymbol,sl,tp,ORDER_TIME_GTC,0,comment);
 
    uint retcode=g_trade.ResultRetcode();
-   detail=StringFormat("lots=%.8f forced_TP=%.8f retcode=%u %s order=%I64u deal=%I64u",
-                       volume,tp,
+   string sl_detail=(sl>0.0 ? DoubleToString(sl,digits) : "NONE");
+   detail=StringFormat("lots=%.8f SL=%s forced_TP=%.8f retcode=%u %s order=%I64u deal=%I64u",
+                       volume,sl_detail,tp,
                        retcode,g_trade.ResultRetcodeDescription(),
                        g_trade.ResultOrder(),g_trade.ResultDeal());
    return sent && IsSuccessfulRetcode(retcode);

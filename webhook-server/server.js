@@ -17,6 +17,12 @@ const ALLOWED_TYPES = new Set([
   "sell stop",
 ]);
 const MARKET_TYPES = new Set(["buy now", "sell now"]);
+const PENDING_TYPES = new Set([
+  "buy limit",
+  "sell limit",
+  "buy stop",
+  "sell stop",
+]);
 const ACK_STATUSES = new Set([
   "executed",
   "dry_run",
@@ -42,17 +48,18 @@ function validateSignal(value) {
     .replace(/\s+/g, " ");
   const entry = String(value.entry ?? "").trim();
   const rawTP = String(value.TP ?? "").trim();
+  const rawSL = String(value.SL ?? "").trim();
   const TP = normalizePrice(rawTP);
-  const SL = normalizePrice(value.SL);
+  const SL = normalizePrice(rawSL);
 
   if (!ALLOWED_TYPES.has(type)) {
     return { error: "type không hợp lệ." };
   }
-  if (!SL) {
-    return { error: "SL phải là giá dương hợp lệ." };
-  }
   if (rawTP !== "" && !TP) {
     return { error: "TP phải để trống hoặc là giá dương hợp lệ." };
+  }
+  if (rawSL !== "" && !SL) {
+    return { error: "SL phải để trống hoặc là giá dương hợp lệ." };
   }
 
   if (MARKET_TYPES.has(type)) {
@@ -60,6 +67,10 @@ function validateSignal(value) {
       return { error: `${type} phải có entry rỗng.` };
     }
     return { signal: { type, entry: "", TP, SL } };
+  }
+
+  if (!PENDING_TYPES.has(type) && !SL) {
+    return { error: `${type} phải có SL hợp lệ.` };
   }
 
   const normalizedEntry = normalizePrice(entry);

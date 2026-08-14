@@ -1,6 +1,6 @@
 # Telegram - Tự động phân tích tín hiệu và gửi MT5
 
-Chrome Extension Manifest V3 theo dõi riêng nội dung text mới trong cuộc hội thoại đang mở trên `https://web.telegram.org`, dùng model `gpt-5.6-sol` với mức suy luận `none` để phân tích tín hiệu Forex, rồi tự động gửi JSON hợp lệ sang webhook MetaTrader 5.
+Chrome Extension Manifest V3 chạy trong Side Panel bên cạnh `https://web.telegram.org`, theo dõi riêng nội dung text mới trong cuộc hội thoại đang mở, dùng model `gpt-5.6-sol` với mức suy luận `none` để phân tích tín hiệu Forex, rồi tự động gửi JSON hợp lệ sang webhook MetaTrader 5.
 
 ## Cài đặt
 
@@ -9,13 +9,18 @@ Chrome Extension Manifest V3 theo dõi riêng nội dung text mới trong cuộc
 3. Bật **Chế độ dành cho nhà phát triển** (Developer mode).
 4. Bấm **Tải tiện ích đã giải nén** (Load unpacked).
 5. Chọn thư mục `telegram-last-message-extension` vừa giải nén.
-6. Mở tab Telegram Web. Extension sẽ tự kết nối, kể cả khi tab đã được mở trước lúc cài đặt.
+6. Mở hoặc tải lại tab Telegram Web. Ở thao tác bấm đầu tiên trên Telegram, extension sẽ yêu cầu Chrome mở Side Panel. Sau đó có thể mở/đóng sidebar trực tiếp bằng biểu tượng extension trên thanh công cụ.
+
+Chrome chỉ cho phép `sidePanel.open()` sau một thao tác người dùng, nên trình cài đặt không thể tự mở sidebar ngay lập tức mà không có lần bấm đầu tiên. Nếu sidebar xuất hiện bên trái, đổi vị trí Side Panel sang bên phải trong phần tùy chỉnh giao diện của Chrome.
+Service worker ghi nhớ tab Telegram được kích hoạt gần nhất và xác minh trực tiếp bằng content script để sidebar luôn đọc đúng cuộc trò chuyện đang mở, kể cả khi Chrome không trả URL tab hiện hành trực tiếp cho trang Side Panel.
+Manifest cấp `host_permissions` riêng cho `https://web.telegram.org/*` để sidebar có thể chèn lại content script khi trang Telegram đã được mở trước lúc extension khởi động hoặc vừa được tải lại.
+Nếu bấm **Reload** extension tại `chrome://extensions`, hãy tải lại tab Telegram một lần để loại bỏ content script thuộc phiên bản cũ. Bản mới cũng tự dừng script cũ nếu Chrome vô hiệu hóa extension context, nên không còn phát sinh lỗi `chrome.runtime.sendMessage` khi người dùng bấm trên Telegram.
 
 ## Bật chế độ tự động hoàn toàn
 
 1. Mở `https://web.telegram.org` và chọn một cuộc trò chuyện.
 2. Nếu đang xem tin nhắn cũ, cuộn xuống cuối cuộc trò chuyện.
-3. Bấm biểu tượng extension trên thanh công cụ Chrome.
+3. Sidebar sẽ mở sau thao tác đầu tiên trên Telegram; cũng có thể bấm biểu tượng extension trên thanh công cụ Chrome để mở thẳng.
 4. Nhập OpenAI API key, webhook URL và webhook token.
 5. Bật **Tự động theo dõi tin nhắn mới và gửi MT5**.
 6. Có thể đóng popup. Giữ Chrome, đúng tab Telegram Web, webhook và MT5 đang chạy.
@@ -79,6 +84,10 @@ Sau khi kiểm tra đúng symbol, lot, entry, SL và TP cố định do EA tính
 
 EA hỗ trợ `buy`, `sell`, `buy now`, `sell now`, `buy limit`, `sell limit`, `buy stop` và `sell stop`. EA kiểm tra hướng giá, quyền giao dịch, bước lot và mã trả về của trade server; tín hiệu không hợp lệ sẽ bị từ chối thay vì tự sửa giá.
 
+Tín hiệu `BUY NOW` hoặc `SELL NOW` vẫn được gửi khi thiếu TP, SL hoặc cả hai; `entry` của hai loại này luôn là `""`. Với `BUY LIMIT`, `SELL LIMIT`, `BUY STOP` và `SELL STOP`, chỉ entry là bắt buộc, còn TP và SL có thể để trống. TP thiếu luôn được EA thay bằng TP cố định; SL thiếu được truyền sang MT5 dưới dạng `0` (lệnh không có Stop Loss). `BUY` và `SELL` thường vẫn bắt buộc có entry và SL hợp lệ.
+
+> Lệnh không có SL có thể thua lỗ không giới hạn theo mức giá và cũng không kích hoạt cơ chế tăng lot sau SL của EA. Chỉ bật giao dịch thật nếu bạn chấp nhận rõ rủi ro này.
+
 ### Lot tăng sau SL và TP cố định
 
 - Lot khởi đầu là `InpLots`. Nếu đặt `0.01`, chuỗi sau SL là `0.01 → 0.02 → 0.03 → ...`.
@@ -107,7 +116,29 @@ Kết quả khi đủ dữ liệu:
 }
 ```
 
-Nếu không đủ loại lệnh, entry bắt buộc hoặc SL, kết quả là `{}`. TP có thể là `""` vì EA luôn thay thế bằng TP cố định. Với `buy now` và `sell now`, `entry` luôn là `""`.
+Kết quả là `{}` nếu không nhận diện được loại lệnh, hoặc nếu một trong bốn lệnh chờ không có entry. TP có thể là `""` vì EA luôn thay thế bằng TP cố định. Với `buy now` và `sell now`, `entry` luôn là `""`; với bốn lệnh chờ, entry phải là giá dương. Cả sáu loại này đều cho phép TP và SL là `""`.
+
+Ví dụ market-now không có TP và SL trong tin nhắn:
+
+```json
+{
+  "type": "buy now",
+  "entry": "",
+  "TP": "",
+  "SL": ""
+}
+```
+
+Ví dụ lệnh chờ chỉ có entry:
+
+```json
+{
+  "type": "sell limit",
+  "entry": "4156",
+  "TP": "",
+  "SL": ""
+}
+```
 
 Extension chuẩn hóa cục bộ các lỗi chính tả rõ ràng trong từ khóa lệnh trước khi gửi text tới GPT-5.6 Sol. Ví dụ `SELLL Stopd` thành `SELL STOP`, còn `BUYĐD Stopd` thành `BUY STOP`. Extension không thay đổi các con số giá hoặc những từ thông thường.
 

@@ -27,6 +27,9 @@ const automationPanel = document.querySelector("#automationPanel");
 const automationTitle = document.querySelector("#automationTitle");
 const automationStatus = document.querySelector("#automationStatus");
 const status = document.querySelector("#status");
+const extensionVersion = document.querySelector("#extensionVersion");
+
+extensionVersion.textContent = `v${chrome.runtime.getManifest().version}`;
 
 let currentSignal = null;
 let currentSignalIdempotencyKey = "";
@@ -130,7 +133,15 @@ function getWebhookConfiguration() {
 }
 
 async function getActiveTelegramTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const response = await chrome.runtime.sendMessage({
+    type: "GET_ACTIVE_TELEGRAM_TAB",
+  });
+  if (!response?.ok) {
+    throw new Error(
+      response?.error || "Không xác định được tab Telegram đang mở."
+    );
+  }
+  const tab = response.tab;
   if (!tab?.id || !tab.url?.startsWith("https://web.telegram.org/")) {
     throw new Error("Hãy mở Telegram Web và chọn một cuộc trò chuyện trước.");
   }
