@@ -3,7 +3,7 @@
 //| Pulls authenticated Forex signals from the local webhook server. |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "1.12"
+#property version   "1.13"
 #property description "Nhan JSON tu webhook Telegram va dat lenh tren MetaTrader 5"
 
 #include <Trade/Trade.mqh>
@@ -431,7 +431,7 @@ bool ValidateVolume(const double requested_volume,double &volume,string &detail)
   }
 
 //+------------------------------------------------------------------+
-bool ApplyForcedTakeProfit(TradeSignal &signal,const string type,string &detail)
+bool ApplyCappedTakeProfit(TradeSignal &signal,const string type,string &detail)
   {
    if(InpTakeProfitPips<=0.0 || InpPipSize<=0.0)
      {
@@ -455,7 +455,7 @@ bool ApplyForcedTakeProfit(TradeSignal &signal,const string type,string &detail)
       MqlTick tick;
       if(!SymbolInfoTick(InpTradeSymbol,tick))
         {
-         detail="Cannot read current Bid/Ask for forced TP";
+         detail="Cannot read current Bid/Ask for TP selection";
          return false;
         }
       reference_entry=(is_buy ? tick.ask : tick.bid);
@@ -467,20 +467,29 @@ bool ApplyForcedTakeProfit(TradeSignal &signal,const string type,string &detail)
       return false;
      }
 
-   double distance=InpTakeProfitPips*InpPipSize;
-   double calculated_tp=reference_entry+(is_buy ? distance : -distance);
-   if(calculated_tp<=0.0)
+   double maximum_distance=InpTakeProfitPips*InpPipSize;
+   double capped_tp=reference_entry+(is_buy ? maximum_distance : -maximum_distance);
+   if(capped_tp<=0.0)
      {
-      detail="Calculated forced TP is not positive";
+      detail="Calculated capped TP is not positive";
       return false;
      }
 
+   double original_tp=signal.tp;
+   double original_profit_distance=(is_buy ? original_tp-reference_entry :
+                                             reference_entry-original_tp);
+   bool use_original_tp=(original_tp>0.0 &&
+                         original_profit_distance>0.0 &&
+                         original_profit_distance<maximum_distance);
+   double selected_tp=(use_original_tp ? original_tp : capped_tp);
+
    double tick_size=SymbolInfoDouble(InpTradeSymbol,SYMBOL_TRADE_TICK_SIZE);
    if(tick_size>0.0)
-      calculated_tp=MathRound(calculated_tp/tick_size)*tick_size;
+      selected_tp=MathRound(selected_tp/tick_size)*tick_size;
 
    int digits=(int)SymbolInfoInteger(InpTradeSymbol,SYMBOL_DIGITS);
-   signal.tp=NormalizeDouble(calculated_tp,digits);
+   signal.tp=NormalizeDouble(selected_tp,digits);
+   detail=(use_original_tp ? "AI" : "CAP");
    return true;
   }
 
@@ -598,8 +607,9 @@ bool PlaceSignal(const TradeSignal &signal,string &detail)
    string type=signal.type;
    StringToLower(type);
    TradeSignal effective_signal=signal;
-   if(!ApplyForcedTakeProfit(effective_signal,type,detail))
+   if(!ApplyCappedTakeProfit(effective_signal,type,detail))
       return false;
+   string tp_source=detail;
    if(!ValidatePrices(effective_signal,type,detail))
       return false;
 
@@ -629,8 +639,8 @@ bool PlaceSignal(const TradeSignal &signal,string &detail)
 
    uint retcode=g_trade.ResultRetcode();
    string sl_detail=(sl>0.0 ? DoubleToString(sl,digits) : "NONE");
-   detail=StringFormat("lots=%.8f SL=%s forced_TP=%.8f retcode=%u %s order=%I64u deal=%I64u",
-                       volume,sl_detail,tp,
+   detail=StringFormat("lots=%.8f SL=%s selected_TP=%.8f TP_source=%s retcode=%u %s order=%I64u deal=%I64u",
+                       volume,sl_detail,tp,tp_source,
                        retcode,g_trade.ResultRetcodeDescription(),
                        g_trade.ResultOrder(),g_trade.ResultDeal());
    return sent && IsSuccessfulRetcode(retcode);
@@ -677,7 +687,7 @@ int OnInit()
 
    Print("Add ",BaseUrl()," to Tools > Options > Expert Advisors > Allow WebRequest for listed URL.");
    Print("Live trading is ",InpEnableLiveTrading ? "ENABLED" : "DISABLED (dry-run mode)",".");
-   PrintFormat("Lot progression: consecutive SL=%d next lot=%.8f. Forced TP=%.2f pips x %.8f price units.",
+   PrintFormat("Lot progression: consecutive SL=%d next lot=%.8f. TP cap=%.2f pips x %.8f price units.",
                g_consecutive_sl,InpLots*(g_consecutive_sl+1),
                InpTakeProfitPips,InpPipSize);
    return INIT_SUCCEEDED;
@@ -735,11 +745,11 @@ void OnTimer()
       string dry_run_type=signal.type;
       StringToLower(dry_run_type);
       string tp_detail="";
-      ApplyForcedTakeProfit(dry_run_signal,dry_run_type,tp_detail);
+      ApplyCappedTakeProfit(dry_run_signal,dry_run_type,tp_detail);
       result_status="dry_run";
-      detail=StringFormat("Dry run: type=%s symbol=%s lots=%.8f entry=%.8f TP=%.8f SL=%.8f",
+      detail=StringFormat("Dry run: type=%s symbol=%s lots=%.8f entry=%.8f TP=%.8f TP_source=%s SL=%.8f",
                           signal.type,InpTradeSymbol,dry_run_lots,signal.entry,
-                          dry_run_signal.tp,signal.sl);
+                          dry_run_signal.tp,tp_detail,signal.sl);
       Print(detail);
      }
    else if(PlaceSignal(signal,detail))
