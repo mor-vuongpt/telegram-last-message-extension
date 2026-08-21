@@ -3,7 +3,7 @@
 //| Pulls authenticated Forex signals from the local webhook server. |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "1.13"
+#property version   "1.15"
 #property description "Nhan JSON tu webhook Telegram va dat lenh tren MetaTrader 5"
 
 #include <Trade/Trade.mqh>
@@ -31,6 +31,13 @@ struct TradeSignal
    double entry;
    double tp;
    double sl;
+  };
+
+enum ENUM_SIGNAL_EXECUTION_RESULT
+  {
+   SIGNAL_EXECUTION_FAILED=0,
+   SIGNAL_EXECUTION_EXECUTED=1,
+   SIGNAL_EXECUTION_SKIPPED=2
   };
 
 CTrade g_trade;
@@ -589,34 +596,240 @@ bool IsSuccessfulRetcode(const uint retcode)
   }
 
 //+------------------------------------------------------------------+
-bool PlaceSignal(const TradeSignal &signal,string &detail)
+bool IsBuySignalType(const string type)
+  {
+   return type=="buy" || type=="buy now" ||
+          type=="buy limit" || type=="buy stop";
+  }
+
+//+------------------------------------------------------------------+
+bool IsSellSignalType(const string type)
+  {
+   return type=="sell" || type=="sell now" ||
+          type=="sell limit" || type=="sell stop";
+  }
+
+//+------------------------------------------------------------------+
+bool PendingOrderTypeForSignal(const string type,ENUM_ORDER_TYPE &order_type)
+  {
+   if(type=="buy limit")
+     {
+      order_type=ORDER_TYPE_BUY_LIMIT;
+      return true;
+     }
+   if(type=="sell limit")
+     {
+      order_type=ORDER_TYPE_SELL_LIMIT;
+      return true;
+     }
+   if(type=="buy stop")
+     {
+      order_type=ORDER_TYPE_BUY_STOP;
+      return true;
+     }
+   if(type=="sell stop")
+     {
+      order_type=ORDER_TYPE_SELL_STOP;
+      return true;
+     }
+   return false;
+  }
+
+//+------------------------------------------------------------------+
+double PriceComparisonTolerance()
+  {
+   double tick_size=SymbolInfoDouble(InpTradeSymbol,SYMBOL_TRADE_TICK_SIZE);
+   if(tick_size<=0.0)
+      tick_size=SymbolInfoDouble(InpTradeSymbol,SYMBOL_POINT);
+   return (tick_size>0.0 ? tick_size*0.5 : 0.00000001);
+  }
+
+//+------------------------------------------------------------------+
+bool PricesMatch(const double first,const double second)
+  {
+   return MathAbs(first-second)<=PriceComparisonTolerance()+0.000000000001;
+  }
+
+//+------------------------------------------------------------------+
+bool FindDuplicatePendingOrder(const string type,const double entry,ulong &order_ticket)
+  {
+   ENUM_ORDER_TYPE expected_type;
+   if(!PendingOrderTypeForSignal(type,expected_type))
+      return false;
+
+   int total=OrdersTotal();
+   for(int index=0; index<total; index++)
+     {
+      ulong ticket=OrderGetTicket(index);
+      if(ticket==0)
+         continue;
+      if(OrderGetString(ORDER_SYMBOL)!=InpTradeSymbol ||
+         (ulong)OrderGetInteger(ORDER_MAGIC)!=InpMagicNumber ||
+         (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE)!=expected_type)
+         continue;
+      if(!PricesMatch(OrderGetDouble(ORDER_PRICE_OPEN),entry))
+         continue;
+
+      order_ticket=ticket;
+      return true;
+     }
+   return false;
+  }
+
+//+------------------------------------------------------------------+
+void AnalyzeMatchingPositions(const bool incoming_is_buy,
+                              const double incoming_sl,
+                              int &same_direction_count,
+                              double &maximum_same_direction_volume,
+                              bool &same_sl_exists,
+                              ulong &same_sl_ticket,
+                              ulong &opposite_tickets[])
+  {
+   same_direction_count=0;
+   maximum_same_direction_volume=0.0;
+   same_sl_exists=false;
+   same_sl_ticket=0;
+   ArrayResize(opposite_tickets,0);
+
+   int total=PositionsTotal();
+   for(int index=0; index<total; index++)
+     {
+      ulong ticket=PositionGetTicket(index);
+      if(ticket==0)
+         continue;
+      if(PositionGetString(POSITION_SYMBOL)!=InpTradeSymbol ||
+         (ulong)PositionGetInteger(POSITION_MAGIC)!=InpMagicNumber)
+         continue;
+
+      ENUM_POSITION_TYPE position_type=(ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+      bool position_is_buy=(position_type==POSITION_TYPE_BUY);
+      bool position_is_sell=(position_type==POSITION_TYPE_SELL);
+      if(!position_is_buy && !position_is_sell)
+         continue;
+
+      if(position_is_buy==incoming_is_buy)
+        {
+         same_direction_count++;
+         maximum_same_direction_volume=MathMax(maximum_same_direction_volume,
+                                               PositionGetDouble(POSITION_VOLUME));
+         if(PricesMatch(PositionGetDouble(POSITION_SL),incoming_sl))
+           {
+            same_sl_exists=true;
+            same_sl_ticket=ticket;
+           }
+        }
+      else
+        {
+         int count=ArraySize(opposite_tickets);
+         ArrayResize(opposite_tickets,count+1);
+         opposite_tickets[count]=ticket;
+        }
+     }
+  }
+
+//+------------------------------------------------------------------+
+bool CloseOppositePositions(const ulong &tickets[],string &detail)
+  {
+   int total=ArraySize(tickets);
+   for(int index=0; index<total; index++)
+     {
+      ulong ticket=tickets[index];
+      bool sent=g_trade.PositionClose(ticket,(ulong)InpDeviationPoints);
+      uint retcode=g_trade.ResultRetcode();
+      if(!sent || !IsSuccessfulRetcode(retcode))
+        {
+         detail=StringFormat("Cannot close opposite position #%I64u: retcode=%u %s",
+                             ticket,retcode,g_trade.ResultRetcodeDescription());
+         return false;
+        }
+      if(PositionSelectByTicket(ticket))
+        {
+         detail=StringFormat("Opposite position #%I64u remains open after close request",ticket);
+         return false;
+        }
+
+      PrintFormat("Closed opposite position #%I64u before processing the new signal.",ticket);
+     }
+   return true;
+  }
+
+//+------------------------------------------------------------------+
+ENUM_SIGNAL_EXECUTION_RESULT PlaceSignal(const TradeSignal &signal,string &detail)
   {
    if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ||
       !MQLInfoInteger(MQL_TRADE_ALLOWED) ||
       !AccountInfoInteger(ACCOUNT_TRADE_ALLOWED))
      {
       detail="AutoTrading or account trading permission is disabled";
-      return false;
+      return SIGNAL_EXECUTION_FAILED;
      }
 
-   double requested_volume=InpLots*(g_consecutive_sl+1);
-   double volume=0.0;
-   if(!ValidateVolume(requested_volume,volume,detail))
-      return false;
-
-   string type=signal.type;
+   string type=Trimmed(signal.type);
    StringToLower(type);
    TradeSignal effective_signal=signal;
    if(!ApplyCappedTakeProfit(effective_signal,type,detail))
-      return false;
+      return SIGNAL_EXECUTION_FAILED;
    string tp_source=detail;
    if(!ValidatePrices(effective_signal,type,detail))
-      return false;
+      return SIGNAL_EXECUTION_FAILED;
 
    int digits=(int)SymbolInfoInteger(InpTradeSymbol,SYMBOL_DIGITS);
    double entry=NormalizeDouble(effective_signal.entry,digits);
    double sl=NormalizeDouble(effective_signal.sl,digits);
    double tp=NormalizeDouble(effective_signal.tp,digits);
+
+   ENUM_ORDER_TYPE pending_order_type;
+   bool is_pending=PendingOrderTypeForSignal(type,pending_order_type);
+   ulong duplicate_order_ticket=0;
+   if(is_pending && FindDuplicatePendingOrder(type,entry,duplicate_order_ticket))
+     {
+      detail=StringFormat("Skipped duplicate pending order #%I64u: type=%s entry=%s",
+                          duplicate_order_ticket,type,DoubleToString(entry,digits));
+      return SIGNAL_EXECUTION_SKIPPED;
+     }
+
+   bool incoming_is_buy=IsBuySignalType(type);
+   if(!incoming_is_buy && !IsSellSignalType(type))
+     {
+      detail="Unsupported order type: "+type;
+      return SIGNAL_EXECUTION_FAILED;
+     }
+
+   int same_direction_count=0;
+   double maximum_same_direction_volume=0.0;
+   bool same_sl_exists=false;
+   ulong same_sl_ticket=0;
+   ulong opposite_tickets[];
+   AnalyzeMatchingPositions(incoming_is_buy,sl,same_direction_count,
+                            maximum_same_direction_volume,
+                            same_sl_exists,same_sl_ticket,opposite_tickets);
+
+   ENUM_ACCOUNT_MARGIN_MODE margin_mode=(ENUM_ACCOUNT_MARGIN_MODE)AccountInfoInteger(ACCOUNT_MARGIN_MODE);
+   if(same_direction_count>0 && !same_sl_exists &&
+      margin_mode!=ACCOUNT_MARGIN_MODE_RETAIL_HEDGING)
+     {
+      detail="Cannot keep separate same-direction positions with different SL on a netting/exchange account";
+      return SIGNAL_EXECUTION_FAILED;
+     }
+
+   double requested_volume=InpLots*(g_consecutive_sl+1);
+   if(same_direction_count>0)
+      requested_volume=maximum_same_direction_volume+InpLots;
+   double volume=0.0;
+   if(!same_sl_exists && !ValidateVolume(requested_volume,volume,detail))
+      return SIGNAL_EXECUTION_FAILED;
+
+   if(!CloseOppositePositions(opposite_tickets,detail))
+      return SIGNAL_EXECUTION_FAILED;
+
+   if(same_sl_exists)
+     {
+      detail=StringFormat("Skipped same-direction signal: position #%I64u already has SL=%s; closed_opposite=%d",
+                          same_sl_ticket,(sl>0.0 ? DoubleToString(sl,digits) : "NONE"),
+                          ArraySize(opposite_tickets));
+      return SIGNAL_EXECUTION_SKIPPED;
+     }
+
    string comment="TG:"+StringSubstr(signal.id,0,20);
    bool sent=false;
 
@@ -639,11 +852,13 @@ bool PlaceSignal(const TradeSignal &signal,string &detail)
 
    uint retcode=g_trade.ResultRetcode();
    string sl_detail=(sl>0.0 ? DoubleToString(sl,digits) : "NONE");
-   detail=StringFormat("lots=%.8f SL=%s selected_TP=%.8f TP_source=%s retcode=%u %s order=%I64u deal=%I64u",
-                       volume,sl_detail,tp,tp_source,
+   detail=StringFormat("lots=%.8f SL=%s selected_TP=%.8f TP_source=%s same_positions=%d closed_opposite=%d retcode=%u %s order=%I64u deal=%I64u",
+                       volume,sl_detail,tp,tp_source,same_direction_count,
+                       ArraySize(opposite_tickets),
                        retcode,g_trade.ResultRetcodeDescription(),
                        g_trade.ResultOrder(),g_trade.ResultDeal());
-   return sent && IsSuccessfulRetcode(retcode);
+   return (sent && IsSuccessfulRetcode(retcode) ?
+           SIGNAL_EXECUTION_EXECUTED : SIGNAL_EXECUTION_FAILED);
   }
 
 //+------------------------------------------------------------------+
@@ -752,15 +967,24 @@ void OnTimer()
                           dry_run_signal.tp,tp_detail,signal.sl);
       Print(detail);
      }
-   else if(PlaceSignal(signal,detail))
-     {
-      result_status="executed";
-      Print("Trade accepted: ",detail);
-     }
    else
      {
-      result_status="rejected";
-      Print("Trade rejected: ",detail);
+      ENUM_SIGNAL_EXECUTION_RESULT execution_result=PlaceSignal(signal,detail);
+      if(execution_result==SIGNAL_EXECUTION_EXECUTED)
+        {
+         result_status="executed";
+         Print("Trade accepted: ",detail);
+        }
+      else if(execution_result==SIGNAL_EXECUTION_SKIPPED)
+        {
+         result_status="duplicate";
+         Print("Trade skipped: ",detail);
+        }
+      else
+        {
+         result_status="rejected";
+         Print("Trade rejected: ",detail);
+        }
      }
 
    g_last_signal_id=signal.id;
